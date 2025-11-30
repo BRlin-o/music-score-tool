@@ -1,73 +1,75 @@
-# React + TypeScript + Vite
+# Music Score Tool Pro (樂譜圖床與合併工具 - 旗艦版)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A powerful React-based tool for musicians and music educators to process, merge, and enhance sheet music images.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **Image Merging**: Upload multiple sheet music screenshots and merge them into a single, seamless vertical image.
+- **Red Light Filter (Red Channel Filtering)**: Specifically designed to remove background noise and artifacts, perfect for processing scanned or photographed sheet music.
+- **Super Resolution (2x Upscaling)**: Uses high-quality bicubic interpolation with smoothing to upscale images by 2x, creating crisp, vector-like edges for printing.
+- **Ink Boost**: Enhance the contrast and depth of the music notes (ink) while keeping the background clean.
+- **Interactive Preview**: Real-time preview of the processed result with zoom and pan capabilities.
+- **Drag & Drop Reordering**: Easily reorder uploaded images before merging.
+- **Privacy Focused**: All processing happens locally in your browser. No images are uploaded to any server.
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Frontend Framework**: React 19 + TypeScript
+- **Build Tool**: Vite
+- **Styling**: Tailwind CSS 4
+- **Icons**: Lucide React
 
-## Expanding the ESLint configuration
+## Getting Started
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Prerequisites
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- Node.js (v18 or higher recommended)
+- npm or yarn
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### Installation
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/br/music-score-tool.git
+   cd music-score-tool
+   ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+3. Start the development server:
+   ```bash
+   npm run dev
+   ```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+4. Open your browser and navigate to `http://localhost:5173` (or the URL shown in your terminal).
+
+## Usage
+
+1. **Upload**: Click the upload area to select your sheet music images (PNG or JPG).
+2. **Adjust Order**: Use the up/down arrows to arrange the pages in the correct order.
+3. **Tune Settings**:
+   - **Threshold**: Adjust the black/white cutoff point. Lower values make lines thinner, higher values make them thicker.
+   - **Ink Boost**: Increase the darkness of the notes.
+   - **Super Resolution**: Toggle this on for high-quality 2x upscaling (recommended for final export).
+4. **Download**: Click the "Download Result" button to save the merged sheet music as a PNG file.
+
+## Deployment
+
+This project is configured for deployment to GitHub Pages.
+
+1. Build the project:
+   ```bash
+   npm run build
+   ```
+
+2. Deploy:
+   ```bash
+   npm run deploy
+   ```
+
+## License
+
+MIT
