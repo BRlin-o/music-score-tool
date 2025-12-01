@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, type ChangeEvent, type ClipboardEvent } from 'react';
-import { Upload, X, Download, Image as ImageIcon, Sliders, Loader2, Trash2, Sparkles, Zap, History, ArrowRightLeft, ScanLine, Type, Droplet, LayoutTemplate, Columns, Crop, Move, Maximize } from 'lucide-react';
+import { Upload, X, Download, Image as ImageIcon, Sliders, Loader2, Trash2, Sparkles, Zap, ArrowRightLeft, ScanLine, Type, Droplet, LayoutTemplate, Columns, Crop, Move, Maximize } from 'lucide-react';
 
 // --- CONSTANTS ---
 const CONFIG = {
@@ -699,8 +699,8 @@ const App3: React.FC = () => {
                 {/* Header */}
                 <div className="p-4 border-b border-slate-100 bg-slate-50">
                     <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                        <History className="w-6 h-6 text-indigo-600" />
-                        樂譜工作站 <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1 rounded border border-indigo-200">PRO V3</span>
+                        <img src={`${import.meta.env.BASE_URL}clefarity.png`} alt="Clefarity Logo" className="w-8 h-8 object-contain" />
+                        Clefarity <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1 rounded border border-indigo-200">PRO V3</span>
                     </h1>
                 </div>
 

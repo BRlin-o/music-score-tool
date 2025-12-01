@@ -302,7 +302,7 @@ const App2 = () => {
                 <div className="p-4 border-b border-slate-100">
                     <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
                         <History className="w-6 h-6 text-indigo-600" />
-                        樂譜工作站
+                        Clefarity V2
                     </h1>
                     <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
                         <Clipboard className="w-3 h-3" /> Ctrl+V 貼上 / 拖曳上傳
