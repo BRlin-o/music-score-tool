@@ -1,30 +1,36 @@
-# Music Score Tool Pro (樂譜圖床與合併工具 - 旗艦版)
+# Music Score Tool (樂譜圖床與處理工具)
 
-A powerful React-based tool for musicians and music educators to process, merge, and enhance sheet music images.
+A powerful, privacy-focused React application for musicians to process, clean, and enhance sheet music images.
 
-## Features
+**Current Version: V3 (Pro)**
 
-- **Image Merging**: Upload multiple sheet music screenshots and merge them into a single, seamless vertical image.
-- **Red Light Filter (Red Channel Filtering)**: Specifically designed to remove background noise and artifacts, perfect for processing scanned or photographed sheet music.
-- **Super Resolution (2x Upscaling)**: Uses high-quality bicubic interpolation with smoothing to upscale images by 2x, creating crisp, vector-like edges for printing.
-- **Ink Boost**: Enhance the contrast and depth of the music notes (ink) while keeping the background clean.
-- **Interactive Preview**: Real-time preview of the processed result with zoom and pan capabilities.
-- **Drag & Drop Reordering**: Easily reorder uploaded images before merging.
-- **Privacy Focused**: All processing happens locally in your browser. No images are uploaded to any server.
+## ✨ Key Features (V3)
 
-## Tech Stack
+### 🧠 Dual Processing Algorithms
+- **Adaptive (自適應)**: Best for photos. Automatically handles uneven lighting, shadows, and paper wrinkles to produce a clean, high-contrast result.
+- **Classic (經典)**: Best for scans. Uses a Red Channel filter to remove specific artifacts and colored markings.
 
-- **Frontend Framework**: React 19 + TypeScript
-- **Build Tool**: Vite
-- **Styling**: Tailwind CSS 4
-- **Icons**: Lucide React
+### 🎨 Background & Layout Control
+- **Transparent Background**: One-click removal of the paper background for easy compositing.
+- **Custom Background Color**: Choose any color for the background if transparency is off.
+- **Smart Auto-Crop**: Automatically detects the music content and crops out excess margins.
+- **Flexible Padding**: Adjust padding (Uniform, Axis, or Independent) to frame your score perfectly.
 
-## Getting Started
+### 🛠️ Advanced Image Enhancement
+- **Super Resolution**: Adjustable scaling (up to 3x) for crisp, print-ready edges.
+- **Edge Smoothing**: Configurable anti-aliasing to remove jagged edges.
+- **Live Comparison**: Split-screen slider to compare the original and processed images in real-time.
+
+### ⚡ Workflow Efficiency
+- **Local History**: Keeps track of your recent uploads and settings within the session.
+- **Privacy First**: All processing is done **locally in your browser**. No images are ever uploaded to a server.
+- **Sync Crop**: View the original image cropped exactly like the processed result for precise comparison.
+
+## 🚀 Getting Started
 
 ### Prerequisites
-
-- Node.js (v18 or higher recommended)
-- npm or yarn
+- Node.js (v18+)
+- npm
 
 ### Installation
 
@@ -44,31 +50,41 @@ A powerful React-based tool for musicians and music educators to process, merge,
    npm run dev
    ```
 
-4. Open your browser and navigate to `http://localhost:5173` (or the URL shown in your terminal).
+4. Open `http://localhost:5173` in your browser.
 
-## Usage
+## 📖 Usage Guide (V3)
 
-1. **Upload**: Click the upload area to select your sheet music images (PNG or JPG).
-2. **Adjust Order**: Use the up/down arrows to arrange the pages in the correct order.
-3. **Tune Settings**:
-   - **Threshold**: Adjust the black/white cutoff point. Lower values make lines thinner, higher values make them thicker.
-   - **Ink Boost**: Increase the darkness of the notes.
-   - **Super Resolution**: Toggle this on for high-quality 2x upscaling (recommended for final export).
-4. **Download**: Click the "Download Result" button to save the merged sheet music as a PNG file.
+1. **Upload**: Drag & drop images or paste from clipboard (Ctrl+V/Cmd+V).
+2. **Select Algorithm**:
+   - Use **Adaptive** for most phone camera photos.
+   - Use **Classic** if you need to filter out red ink or have a flat scan.
+3. **Fine-Tune**:
+   - Adjust **Threshold** to control line thickness.
+   - Tweak **Smoothness** to reduce noise.
+4. **Layout**:
+   - Enable **Auto Crop** to remove borders.
+   - Set **Padding** as needed.
+   - Toggle **Transparent Background** or pick a **Background Color**.
+5. **Download**: Click the Download button to save the processed PNG.
 
-## Deployment
+## 🛠️ Tech Stack
 
-This project is configured for deployment to GitHub Pages.
+- **Framework**: React 19 + TypeScript
+- **Build Tool**: Vite
+- **Styling**: Tailwind CSS 4
+- **Icons**: Lucide React
 
-1. Build the project:
-   ```bash
-   npm run build
-   ```
+## 📦 Deployment
 
-2. Deploy:
-   ```bash
-   npm run deploy
-   ```
+This project is configured for GitHub Pages.
+
+```bash
+# Build for production
+npm run build
+
+# Deploy to GitHub Pages
+npm run deploy
+```
 
 ## License
 
