@@ -23,6 +23,51 @@ const SheetMusicToolPro = () => {
   // New Feature: Super Resolution
   const [superResolution, setSuperResolution] = useState(false);
 
+  // --- CLIPBOARD PASTE SUPPORT ---
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const files: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          const file = items[i].getAsFile();
+          if (file) files.push(file);
+        }
+      }
+
+      if (files.length > 0) {
+        const newImagesPromises = files.map(file => {
+          return new Promise<ImageItem>((resolve) => {
+            const img = new Image();
+            const objectUrl = URL.createObjectURL(file);
+            img.onload = () => {
+              resolve({
+                id: Math.random().toString(36).substr(2, 9),
+                file,
+                preview: objectUrl,
+                name: file.name || `pasted_image_${new Date().getTime()}.png`,
+                width: img.width,
+                height: img.height
+              });
+            };
+            img.src = objectUrl;
+          });
+        });
+
+        Promise.all(newImagesPromises).then(newImages => {
+          setImages(prev => [...prev, ...newImages]);
+        });
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => {
+      window.removeEventListener('paste', handlePaste);
+    };
+  }, []); // Empty dependency array means this runs once on mount
+
   const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -259,7 +304,7 @@ const SheetMusicToolPro = () => {
               <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-indigo-200 rounded-xl cursor-pointer bg-indigo-50/30 hover:bg-indigo-50 transition-colors">
                 <div className="flex flex-col items-center justify-center pt-2">
                   <Upload className="w-8 h-8 mb-1 text-indigo-400" />
-                  <p className="text-sm text-slate-600">點擊上傳多張截圖</p>
+                  <p className="text-sm text-slate-600">點擊上傳多張截圖 或 Ctrl+V 貼上</p>
                 </div>
                 <input type="file" className="hidden" accept="image/jpeg, image/png" multiple onChange={handleFileUpload} />
               </label>
