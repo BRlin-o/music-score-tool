@@ -4,14 +4,14 @@ import { Upload, X, Download, Image as ImageIcon, Sliders, Loader2, Trash2, Spar
 // --- CONSTANTS ---
 const CONFIG = {
     defaults: {
-        algorithm: 'adaptive' as const,
+        algorithm: 'classic' as const,
         threshold: {
             adaptive: 60,
-            classic: 140
+            classic: 130
         },
-        contrastBoost: 20,
-        scaleMultiplier: 2.0,
-        smoothness: 5,
+        contrastBoost: 15,
+        scaleMultiplier: 1.5,
+        smoothness: 15,
         autoCrop: true,
         paddingMode: 'uniform' as const,
         padding: {
