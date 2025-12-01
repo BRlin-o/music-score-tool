@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, type ChangeEvent, type ClipboardEvent } from 'react';
-import { Upload, X, Download, Image as ImageIcon, Sliders, Loader2, Trash2, Sparkles, Zap, History, ArrowRightLeft, ScanLine, Type, Droplet, LayoutTemplate, Columns } from 'lucide-react';
+import { Upload, X, Download, Image as ImageIcon, Sliders, Loader2, Trash2, Sparkles, Zap, History, ArrowRightLeft, ScanLine, Type, Droplet, LayoutTemplate, Columns, Crop, Move, Maximize, Minimize } from 'lucide-react';
 
 // --- CONSTANTS ---
 const CONFIG = {
@@ -7,11 +7,19 @@ const CONFIG = {
         algorithm: 'adaptive' as const,
         threshold: {
             adaptive: 60,
-            classic: 130
+            classic: 140
         },
-        contrastBoost: 15,
-        scaleMultiplier: 1.5,
-        smoothness: 15
+        contrastBoost: 20,
+        scaleMultiplier: 2.0,
+        smoothness: 5,
+        autoCrop: true,
+        paddingMode: 'uniform' as const,
+        padding: {
+            top: 50,
+            right: 50,
+            bottom: 50,
+            left: 50
+        }
     },
     ranges: {
         scale: { min: 1.0, max: 3.0, step: 0.5 },
@@ -20,18 +28,27 @@ const CONFIG = {
             classic: { min: 50, max: 220 }
         },
         contrastBoost: { min: 0, max: 60 },
-        smoothness: { min: 0, max: 20 }
+        smoothness: { min: 0, max: 20 },
+        padding: { min: 0, max: 300 }
     }
 };
 
 // --- TYPES ---
 type ViewMode = 'split' | 'original' | 'processed';
+type PaddingMode = 'uniform' | 'axis' | 'independent';
+
 interface Settings {
     algorithm: 'classic' | 'adaptive';
     threshold: number;
     contrastBoost: number;
     scaleMultiplier: number;
-    smoothness: number; // New: 0 (Hard) to 20 (Very Soft)
+    smoothness: number;
+    autoCrop: boolean;
+    paddingMode: PaddingMode;
+    paddingTop: number;
+    paddingRight: number;
+    paddingBottom: number;
+    paddingLeft: number;
 }
 
 interface GalleryItem {
@@ -39,6 +56,7 @@ interface GalleryItem {
     name: string;
     originalUrl: string;
     processedUrl: string | null;
+    croppedOriginalUrl: string | null; // NEW: For synchronized comparison
     status: 'processing' | 'done' | 'error';
     timestamp: Date;
     settingsUsed: Settings;
@@ -47,12 +65,18 @@ interface GalleryItem {
 interface ComparisonViewProps {
     originalUrl: string;
     processedUrl: string | null;
+    croppedOriginalUrl: string | null;
     settings: Settings;
     viewMode: ViewMode;
 }
 
+interface ProcessResult {
+    processed: string;
+    croppedOriginal: string;
+}
+
 // --- CORE ALGORITHM ---
-const processSingleImage = async (imgSrc: string, settings: Settings): Promise<string> => {
+const processSingleImage = async (imgSrc: string, settings: Settings): Promise<ProcessResult> => {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = "Anonymous";
@@ -63,7 +87,12 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<s
                     threshold,
                     contrastBoost,
                     scaleMultiplier,
-                    smoothness = 0 // Default to 0 if undefined
+                    smoothness = 0,
+                    autoCrop,
+                    paddingTop,
+                    paddingRight,
+                    paddingBottom,
+                    paddingLeft
                 } = settings;
 
                 const originalWidth = img.width;
@@ -71,40 +100,40 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<s
                 const scaleFactor = targetWidth / originalWidth;
                 const scaledHeight = img.height * scaleFactor;
 
-                // 1. Setup Canvas
+                // 1. Setup Scaled Canvas (Base for both processed and cropped-original)
+                const scaledCanvas = document.createElement('canvas');
+                scaledCanvas.width = targetWidth;
+                scaledCanvas.height = scaledHeight;
+                const scaledCtx = scaledCanvas.getContext('2d');
+                if (!scaledCtx) throw new Error("Could not get scaled canvas context");
+
+                // High Quality Scaling
+                scaledCtx.imageSmoothingEnabled = true;
+                scaledCtx.imageSmoothingQuality = 'high';
+                scaledCtx.drawImage(img, 0, 0, targetWidth, scaledHeight);
+
+                // 2. Create Working Canvas for Processing (Clone of Scaled)
                 const canvas = document.createElement('canvas');
                 canvas.width = targetWidth;
                 canvas.height = scaledHeight;
                 const ctx = canvas.getContext('2d');
-                if (!ctx) throw new Error("Could not get canvas context");
+                if (!ctx) throw new Error("Could not get working canvas context");
+                ctx.drawImage(scaledCanvas, 0, 0);
 
-                // High Quality Scaling (Bicubic-like)
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
-
-                // Draw resized image
-                ctx.drawImage(img, 0, 0, targetWidth, scaledHeight);
                 const imageData = ctx.getImageData(0, 0, targetWidth, scaledHeight);
                 const data = imageData.data;
 
                 // Helper for Soft Thresholding
-                // Returns 0 (Black) to 255 (White) based on value vs threshold +/- smoothness
                 const getSoftVal = (val: number, thresh: number, smooth: number) => {
                     if (smooth === 0) return val < thresh ? 0 : 255;
-
                     const lower = thresh - smooth;
                     const upper = thresh + smooth;
-
                     if (val <= lower) return 0;
                     if (val >= upper) return 255;
-
-                    // Linear interpolation
                     return ((val - lower) / (upper - lower)) * 255;
                 };
 
-                // ----------------------------------------------------
-                // ALGORITHM 1: ADAPTIVE THRESHOLDING (Shadow Remover)
-                // ----------------------------------------------------
+                // ALGORITHM IMPLEMENTATION
                 if (algorithm === 'adaptive') {
                     const blurCanvas = document.createElement('canvas');
                     blurCanvas.width = targetWidth;
@@ -113,7 +142,6 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<s
                     if (!blurCtx) throw new Error("Could not get blur canvas context");
 
                     const blurRadius = 20 * scaleMultiplier;
-
                     blurCtx.filter = `blur(${blurRadius}px)`;
                     blurCtx.drawImage(canvas, 0, 0);
                     blurCtx.clearRect(0, 0, targetWidth, scaledHeight);
@@ -124,37 +152,21 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<s
                     for (let i = 0; i < data.length; i += 4) {
                         const r = data[i];
                         const bgR = blurData[i];
-
-                        // Sensitivity Offset
                         const sensitivityOffset = (100 - threshold) / 2;
-
-                        // The effective threshold for this pixel is (Background - Offset)
                         const localThreshold = bgR - sensitivityOffset;
-
-                        // Apply Soft Thresholding
                         const finalVal = getSoftVal(r, localThreshold, smoothness);
-
                         data[i] = finalVal;
                         data[i + 1] = finalVal;
                         data[i + 2] = finalVal;
                     }
-                }
-                // ----------------------------------------------------
-                // ALGORITHM 2: CLASSIC GLOBAL THRESHOLD
-                // ----------------------------------------------------
-                else {
+                } else {
                     const boostFactor = contrastBoost / 100;
                     for (let i = 0; i < data.length; i += 4) {
                         let r = data[i];
-
-                        // Ink Boost (Pre-processing)
                         if (r < threshold + 40) {
                             r = r * (1 - boostFactor);
                         }
-
-                        // Apply Soft Thresholding
                         const finalVal = getSoftVal(r, threshold, smoothness);
-
                         data[i] = finalVal;
                         data[i + 1] = finalVal;
                         data[i + 2] = finalVal;
@@ -162,7 +174,83 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<s
                 }
 
                 ctx.putImageData(imageData, 0, 0);
-                resolve(canvas.toDataURL('image/png'));
+
+                // --- AUTO CROP & PADDING ---
+                let finalProcessedUrl = '';
+                let finalCroppedOriginalUrl = '';
+
+                if (autoCrop) {
+                    // 1. Find Bounding Box
+                    let minX = targetWidth, minY = scaledHeight, maxX = 0, maxY = 0;
+                    let hasContent = false;
+
+                    for (let y = 0; y < scaledHeight; y++) {
+                        for (let x = 0; x < targetWidth; x++) {
+                            const idx = (y * targetWidth + x) * 4;
+                            if (data[idx] < 230) { // Threshold 230
+                                if (x < minX) minX = x;
+                                if (x > maxX) maxX = x;
+                                if (y < minY) minY = y;
+                                if (y > maxY) maxY = y;
+                                hasContent = true;
+                            }
+                        }
+                    }
+
+                    if (hasContent) {
+                        const contentWidth = maxX - minX + 1;
+                        const contentHeight = maxY - minY + 1;
+
+                        const finalWidth = contentWidth + paddingLeft + paddingRight;
+                        const finalHeight = contentHeight + paddingTop + paddingBottom;
+
+                        // A. Final Processed Canvas
+                        const finalCanvas = document.createElement('canvas');
+                        finalCanvas.width = finalWidth;
+                        finalCanvas.height = finalHeight;
+                        const finalCtx = finalCanvas.getContext('2d');
+                        if (!finalCtx) throw new Error("Could not get final canvas context");
+
+                        finalCtx.fillStyle = '#FFFFFF';
+                        finalCtx.fillRect(0, 0, finalWidth, finalHeight);
+                        finalCtx.drawImage(canvas,
+                            minX, minY, contentWidth, contentHeight,
+                            paddingLeft, paddingTop, contentWidth, contentHeight
+                        );
+                        finalProcessedUrl = finalCanvas.toDataURL('image/png');
+
+                        // B. Final Cropped Original Canvas (Sync Crop)
+                        const finalOrgCanvas = document.createElement('canvas');
+                        finalOrgCanvas.width = finalWidth;
+                        finalOrgCanvas.height = finalHeight;
+                        const finalOrgCtx = finalOrgCanvas.getContext('2d');
+                        if (!finalOrgCtx) throw new Error("Could not get final org canvas context");
+
+                        // Fill white (or transparent? White is safer for consistency)
+                        finalOrgCtx.fillStyle = '#FFFFFF';
+                        finalOrgCtx.fillRect(0, 0, finalWidth, finalHeight);
+
+                        // Draw from SCALED ORIGINAL canvas
+                        finalOrgCtx.drawImage(scaledCanvas,
+                            minX, minY, contentWidth, contentHeight,
+                            paddingLeft, paddingTop, contentWidth, contentHeight
+                        );
+                        finalCroppedOriginalUrl = finalOrgCanvas.toDataURL('image/png');
+                    } else {
+                        // Fallback if no content found (shouldn't happen often, but just in case return full)
+                        finalProcessedUrl = canvas.toDataURL('image/png');
+                        finalCroppedOriginalUrl = scaledCanvas.toDataURL('image/png');
+                    }
+                } else {
+                    // No Auto Crop - Return full scaled images
+                    finalProcessedUrl = canvas.toDataURL('image/png');
+                    finalCroppedOriginalUrl = scaledCanvas.toDataURL('image/png');
+                }
+
+                resolve({
+                    processed: finalProcessedUrl,
+                    croppedOriginal: finalCroppedOriginalUrl
+                });
             } catch (err) {
                 reject(err);
             }
@@ -173,8 +261,9 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<s
 };
 
 // --- COMPONENT: Comparison Slider ---
-const ComparisonView: React.FC<ComparisonViewProps> = ({ originalUrl, processedUrl, settings, viewMode }) => {
+const ComparisonView: React.FC<ComparisonViewProps> = ({ originalUrl, processedUrl, croppedOriginalUrl, settings, viewMode }) => {
     const [sliderPos, setSliderPos] = useState(50);
+    const [syncCrop, setSyncCrop] = useState(true); // Default to true for better UX
     const containerRef = useRef<HTMLDivElement>(null);
     const isDragging = useRef(false);
 
@@ -202,56 +291,75 @@ const ComparisonView: React.FC<ComparisonViewProps> = ({ originalUrl, processedU
 
     if (!originalUrl) return null;
 
+    // Determine which original image to show
+    // If syncCrop is ON and we have a croppedOriginalUrl, use it.
+    // Otherwise use the raw originalUrl.
+    const displayOriginal = (syncCrop && croppedOriginalUrl) ? croppedOriginalUrl : originalUrl;
+
     return (
-        <div className="relative w-full h-full flex items-center justify-center bg-slate-200/50 select-none p-4">
-            <div
-                ref={containerRef}
-                className="relative shadow-2xl bg-white max-w-full max-h-full"
-                onMouseDown={() => (viewMode === 'split' && (isDragging.current = true))}
-                onTouchStart={() => (viewMode === 'split' && (isDragging.current = true))}
-            >
-                {/* Base Image (Original) - Always render but maybe hidden if 'processed' only? 
-                    Actually for 'processed' only we might just want to show processed.
-                    But to keep sizing consistent we can stack them.
-                */}
-                <img
-                    src={originalUrl}
-                    alt="Original"
-                    className={`block max-w-full max-h-[85vh] object-contain pointer-events-none ${viewMode === 'processed' ? 'opacity-0' : ''}`}
-                />
+        <div className="relative w-full h-full flex flex-col">
+            {/* Toolbar for View Options */}
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex gap-2">
+                {croppedOriginalUrl && (
+                    <button
+                        onClick={() => setSyncCrop(!syncCrop)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold shadow-lg backdrop-blur-md border transition-all flex items-center gap-1.5
+                        ${syncCrop ? 'bg-emerald-500/90 text-white border-emerald-400' : 'bg-white/80 text-slate-600 border-slate-200 hover:bg-white'}
+                        `}
+                    >
+                        <Crop className="w-3 h-3" />
+                        {syncCrop ? '同步裁切 (Sync)' : '原始比例 (Raw)'}
+                    </button>
+                )}
+            </div>
 
-                {/* Processed Image Overlay */}
-                {processedUrl && (viewMode === 'split' || viewMode === 'processed') && (
+            <div className="flex-1 flex items-center justify-center bg-slate-200/50 select-none p-4 overflow-hidden">
+                <div
+                    ref={containerRef}
+                    className="relative shadow-2xl bg-white max-w-full max-h-full"
+                    onMouseDown={() => (viewMode === 'split' && (isDragging.current = true))}
+                    onTouchStart={() => (viewMode === 'split' && (isDragging.current = true))}
+                >
+                    {/* Base Image (Original or Cropped Original) */}
                     <img
-                        src={processedUrl}
-                        alt="Processed"
-                        className="absolute inset-0 w-full h-full object-contain pointer-events-none bg-white"
-                        style={{
-                            clipPath: viewMode === 'split' ? `inset(0 ${100 - sliderPos}% 0 0)` : 'none'
-                        }}
+                        src={displayOriginal}
+                        alt="Original"
+                        className={`block max-w-full max-h-[85vh] object-contain pointer-events-none ${viewMode === 'processed' ? 'opacity-0' : ''}`}
                     />
-                )}
 
-                {/* Slider Handle - Only in Split Mode */}
-                {viewMode === 'split' && (
-                    <div className="absolute inset-y-0 w-1 bg-indigo-500 cursor-ew-resize z-20 hover:bg-indigo-400 shadow-[0_0_10px_rgba(0,0,0,0.5)]" style={{ left: `${sliderPos}%` }}>
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg border-2 border-white text-white">
-                            <ArrowRightLeft className="w-4 h-4" />
+                    {/* Processed Image Overlay */}
+                    {processedUrl && (viewMode === 'split' || viewMode === 'processed') && (
+                        <img
+                            src={processedUrl}
+                            alt="Processed"
+                            className="absolute inset-0 w-full h-full object-contain pointer-events-none bg-white"
+                            style={{
+                                clipPath: viewMode === 'split' ? `inset(0 ${100 - sliderPos}% 0 0)` : 'none'
+                            }}
+                        />
+                    )}
+
+                    {/* Slider Handle - Only in Split Mode */}
+                    {viewMode === 'split' && (
+                        <div className="absolute inset-y-0 w-1 bg-indigo-500 cursor-ew-resize z-20 hover:bg-indigo-400 shadow-[0_0_10px_rgba(0,0,0,0.5)]" style={{ left: `${sliderPos}%` }}>
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg border-2 border-white text-white">
+                                <ArrowRightLeft className="w-4 h-4" />
+                            </div>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {/* Labels */}
-                {(viewMode === 'split' || viewMode === 'processed') && (
-                    <div className="absolute top-4 left-4 bg-black/70 text-white text-xs px-2 py-1 rounded backdrop-blur-md z-10 pointer-events-none border border-white/10">
-                        處理後 (Processed) {settings?.scaleMultiplier > 1 && <span className="text-amber-300 font-bold ml-1">{settings.scaleMultiplier}x</span>}
-                    </div>
-                )}
-                {(viewMode === 'split' || viewMode === 'original') && (
-                    <div className="absolute top-4 right-4 bg-black/70 text-white text-xs px-2 py-1 rounded backdrop-blur-md z-10 pointer-events-none border border-white/10">
-                        原始 (Original)
-                    </div>
-                )}
+                    {/* Labels */}
+                    {(viewMode === 'split' || viewMode === 'processed') && (
+                        <div className="absolute top-4 left-4 bg-black/70 text-white text-xs px-2 py-1 rounded backdrop-blur-md z-10 pointer-events-none border border-white/10">
+                            處理後 (Processed) {settings?.scaleMultiplier > 1 && <span className="text-amber-300 font-bold ml-1">{settings.scaleMultiplier}x</span>}
+                        </div>
+                    )}
+                    {(viewMode === 'split' || viewMode === 'original') && (
+                        <div className="absolute top-4 right-4 bg-black/70 text-white text-xs px-2 py-1 rounded backdrop-blur-md z-10 pointer-events-none border border-white/10">
+                            {syncCrop ? '原始 (Synced Crop)' : '原始 (Original)'}
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -270,14 +378,28 @@ const App3: React.FC = () => {
     const [scaleMultiplier, setScaleMultiplier] = useState(CONFIG.defaults.scaleMultiplier);
     const [smoothness, setSmoothness] = useState(CONFIG.defaults.smoothness);
 
+    // Auto Crop & Padding
+    const [autoCrop, setAutoCrop] = useState(CONFIG.defaults.autoCrop);
+    const [paddingMode, setPaddingMode] = useState<PaddingMode>(CONFIG.defaults.paddingMode);
+    const [paddingTop, setPaddingTop] = useState(CONFIG.defaults.padding.top);
+    const [paddingRight, setPaddingRight] = useState(CONFIG.defaults.padding.right);
+    const [paddingBottom, setPaddingBottom] = useState(CONFIG.defaults.padding.bottom);
+    const [paddingLeft, setPaddingLeft] = useState(CONFIG.defaults.padding.left);
+
     // View Mode
     const [viewMode, setViewMode] = useState<ViewMode>('split');
 
-    const settingsRef = useRef<Settings>({ algorithm, threshold, contrastBoost, scaleMultiplier, smoothness });
+    const settingsRef = useRef<Settings>({
+        algorithm, threshold, contrastBoost, scaleMultiplier, smoothness,
+        autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft
+    });
 
     useEffect(() => {
-        settingsRef.current = { algorithm, threshold, contrastBoost, scaleMultiplier, smoothness };
-    }, [algorithm, threshold, contrastBoost, scaleMultiplier, smoothness]);
+        settingsRef.current = {
+            algorithm, threshold, contrastBoost, scaleMultiplier, smoothness,
+            autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft
+        };
+    }, [algorithm, threshold, contrastBoost, scaleMultiplier, smoothness, autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft]);
 
     // --- LIVE PREVIEW LOGIC ---
     const processTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -291,6 +413,13 @@ const App3: React.FC = () => {
             setContrastBoost(prev => prev !== s.contrastBoost ? s.contrastBoost : prev);
             setScaleMultiplier(prev => prev !== s.scaleMultiplier ? s.scaleMultiplier : prev);
             setSmoothness(prev => prev !== (s.smoothness ?? 0) ? (s.smoothness ?? 0) : prev);
+
+            setAutoCrop(prev => prev !== (s.autoCrop ?? CONFIG.defaults.autoCrop) ? (s.autoCrop ?? CONFIG.defaults.autoCrop) : prev);
+            setPaddingMode(prev => prev !== (s.paddingMode ?? CONFIG.defaults.paddingMode) ? (s.paddingMode ?? CONFIG.defaults.paddingMode) : prev);
+            setPaddingTop(prev => prev !== (s.paddingTop ?? CONFIG.defaults.padding.top) ? (s.paddingTop ?? CONFIG.defaults.padding.top) : prev);
+            setPaddingRight(prev => prev !== (s.paddingRight ?? CONFIG.defaults.padding.right) ? (s.paddingRight ?? CONFIG.defaults.padding.right) : prev);
+            setPaddingBottom(prev => prev !== (s.paddingBottom ?? CONFIG.defaults.padding.bottom) ? (s.paddingBottom ?? CONFIG.defaults.padding.bottom) : prev);
+            setPaddingLeft(prev => prev !== (s.paddingLeft ?? CONFIG.defaults.padding.left) ? (s.paddingLeft ?? CONFIG.defaults.padding.left) : prev);
         }
     }, [selectedItem?.id]);
 
@@ -298,14 +427,23 @@ const App3: React.FC = () => {
     useEffect(() => {
         if (!selectedItem) return;
 
-        const newSettings: Settings = { algorithm, threshold, contrastBoost, scaleMultiplier, smoothness };
+        const newSettings: Settings = {
+            algorithm, threshold, contrastBoost, scaleMultiplier, smoothness,
+            autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft
+        };
 
         const isSame =
             selectedItem.settingsUsed.algorithm === newSettings.algorithm &&
             selectedItem.settingsUsed.threshold === newSettings.threshold &&
             selectedItem.settingsUsed.contrastBoost === newSettings.contrastBoost &&
             selectedItem.settingsUsed.scaleMultiplier === newSettings.scaleMultiplier &&
-            selectedItem.settingsUsed.smoothness === newSettings.smoothness;
+            selectedItem.settingsUsed.smoothness === newSettings.smoothness &&
+            selectedItem.settingsUsed.autoCrop === newSettings.autoCrop &&
+            selectedItem.settingsUsed.paddingMode === newSettings.paddingMode &&
+            selectedItem.settingsUsed.paddingTop === newSettings.paddingTop &&
+            selectedItem.settingsUsed.paddingRight === newSettings.paddingRight &&
+            selectedItem.settingsUsed.paddingBottom === newSettings.paddingBottom &&
+            selectedItem.settingsUsed.paddingLeft === newSettings.paddingLeft;
 
         if (isSame) return;
 
@@ -313,16 +451,28 @@ const App3: React.FC = () => {
 
         processTimeoutRef.current = setTimeout(async () => {
             try {
-                const processedUrl = await processSingleImage(selectedItem.originalUrl, newSettings);
+                const result = await processSingleImage(selectedItem.originalUrl, newSettings);
 
                 setSelectedItem(prev => {
                     if (!prev || prev.id !== selectedItem.id) return prev;
-                    return { ...prev, processedUrl, settingsUsed: newSettings, status: 'done' };
+                    return {
+                        ...prev,
+                        processedUrl: result.processed,
+                        croppedOriginalUrl: result.croppedOriginal,
+                        settingsUsed: newSettings,
+                        status: 'done'
+                    };
                 });
 
                 setGalleryItems(prev => prev.map(i =>
                     i.id === selectedItem.id
-                        ? { ...i, processedUrl, settingsUsed: newSettings, status: 'done' }
+                        ? {
+                            ...i,
+                            processedUrl: result.processed,
+                            croppedOriginalUrl: result.croppedOriginal,
+                            settingsUsed: newSettings,
+                            status: 'done'
+                        }
                         : i
                 ));
             } catch (error) {
@@ -333,7 +483,7 @@ const App3: React.FC = () => {
         return () => {
             if (processTimeoutRef.current) clearTimeout(processTimeoutRef.current);
         };
-    }, [algorithm, threshold, contrastBoost, scaleMultiplier, smoothness]);
+    }, [algorithm, threshold, contrastBoost, scaleMultiplier, smoothness, autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft]);
 
 
     // --- LOGIC ---
@@ -345,6 +495,7 @@ const App3: React.FC = () => {
             name: file.name.split('.')[0] || 'Image',
             originalUrl: URL.createObjectURL(file),
             processedUrl: null,
+            croppedOriginalUrl: null,
             status: 'processing',
             timestamp: new Date(),
             settingsUsed: { ...settingsRef.current }
@@ -356,15 +507,25 @@ const App3: React.FC = () => {
 
         newItems.forEach(async (item) => {
             try {
-                const processedUrl = await processSingleImage(item.originalUrl, item.settingsUsed);
+                const result = await processSingleImage(item.originalUrl, item.settingsUsed);
 
                 setGalleryItems(prev => prev.map(prevItem =>
                     prevItem.id === item.id
-                        ? { ...prevItem, processedUrl, status: 'done' }
+                        ? {
+                            ...prevItem,
+                            processedUrl: result.processed,
+                            croppedOriginalUrl: result.croppedOriginal,
+                            status: 'done'
+                        }
                         : prevItem
                 ));
 
-                setSelectedItem(curr => curr && curr.id === item.id ? { ...item, processedUrl, status: 'done' } : curr);
+                setSelectedItem(curr => curr && curr.id === item.id ? {
+                    ...item,
+                    processedUrl: result.processed,
+                    croppedOriginalUrl: result.croppedOriginal,
+                    status: 'done'
+                } : curr);
 
             } catch (error) {
                 console.error("Processing failed:", error);
@@ -476,7 +637,7 @@ const App3: React.FC = () => {
                                 onClick={() => setAlgorithm('adaptive')}
                                 className={`p-2 rounded-lg text-xs font-bold border transition-all flex flex-col items-center gap-1
                                 ${algorithm === 'adaptive' ? 'bg-amber-50 border-amber-400 text-amber-800' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}
-                            `}
+`}
                             >
                                 <Sparkles className="w-4 h-4" />
                                 自適應 (抗陰影)
@@ -485,7 +646,7 @@ const App3: React.FC = () => {
                                 onClick={() => setAlgorithm('classic')}
                                 className={`p-2 rounded-lg text-xs font-bold border transition-all flex flex-col items-center gap-1
                                 ${algorithm === 'classic' ? 'bg-indigo-50 border-indigo-400 text-indigo-800' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}
-                            `}
+`}
                             >
                                 <Type className="w-4 h-4" />
                                 經典 (紅光濾鏡)
@@ -566,6 +727,132 @@ const App3: React.FC = () => {
                         </div>
                     </div>
 
+                    {/* 4. Auto Crop & Padding */}
+                    <div className="p-4 border-t border-slate-200 bg-white">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2 text-slate-700">
+                                <Crop className="w-4 h-4 text-emerald-500" />
+                                <span className="text-sm font-bold">裁切與留白</span>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={autoCrop}
+                                    onChange={(e) => setAutoCrop(e.target.checked)}
+                                    className="sr-only peer"
+                                />
+                                <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                            </label>
+                        </div>
+
+                        {autoCrop && (
+                            <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                {/* Mode Selection */}
+                                <div className="flex bg-slate-100 p-1 rounded-lg">
+                                    <button
+                                        onClick={() => setPaddingMode('uniform')}
+                                        className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all ${paddingMode === 'uniform' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'} `}
+                                    >
+                                        統一
+                                    </button>
+                                    <button
+                                        onClick={() => setPaddingMode('axis')}
+                                        className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all ${paddingMode === 'axis' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'} `}
+                                    >
+                                        對稱
+                                    </button>
+                                    <button
+                                        onClick={() => setPaddingMode('independent')}
+                                        className={`flex-1 py-1 text-[10px] font-bold rounded-md transition-all ${paddingMode === 'independent' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'} `}
+                                    >
+                                        獨立
+                                    </button>
+                                </div>
+
+                                {/* Sliders based on Mode */}
+                                <div className="space-y-2">
+                                    {paddingMode === 'uniform' && (
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between">
+                                                <label className="text-xs font-bold text-slate-600 flex items-center gap-1"><Maximize className="w-3 h-3" /> 四邊留白</label>
+                                                <span className="text-xs font-mono text-emerald-600">{paddingTop}px</span>
+                                            </div>
+                                            <input
+                                                type="range" min={CONFIG.ranges.padding.min} max={CONFIG.ranges.padding.max}
+                                                value={paddingTop}
+                                                onChange={(e) => {
+                                                    const val = Number(e.target.value);
+                                                    setPaddingTop(val); setPaddingRight(val); setPaddingBottom(val); setPaddingLeft(val);
+                                                }}
+                                                className="w-full h-1.5 bg-slate-200 rounded-lg accent-emerald-500"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {paddingMode === 'axis' && (
+                                        <>
+                                            <div className="space-y-1">
+                                                <div className="flex justify-between">
+                                                    <label className="text-xs font-bold text-slate-600 flex items-center gap-1"><Move className="w-3 h-3 rotate-90" /> 上下留白</label>
+                                                    <span className="text-xs font-mono text-emerald-600">{paddingTop}px</span>
+                                                </div>
+                                                <input
+                                                    type="range" min={CONFIG.ranges.padding.min} max={CONFIG.ranges.padding.max}
+                                                    value={paddingTop}
+                                                    onChange={(e) => {
+                                                        const val = Number(e.target.value);
+                                                        setPaddingTop(val); setPaddingBottom(val);
+                                                    }}
+                                                    className="w-full h-1.5 bg-slate-200 rounded-lg accent-emerald-500"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <div className="flex justify-between">
+                                                    <label className="text-xs font-bold text-slate-600 flex items-center gap-1"><Move className="w-3 h-3" /> 左右留白</label>
+                                                    <span className="text-xs font-mono text-emerald-600">{paddingRight}px</span>
+                                                </div>
+                                                <input
+                                                    type="range" min={CONFIG.ranges.padding.min} max={CONFIG.ranges.padding.max}
+                                                    value={paddingRight}
+                                                    onChange={(e) => {
+                                                        const val = Number(e.target.value);
+                                                        setPaddingRight(val); setPaddingLeft(val);
+                                                    }}
+                                                    className="w-full h-1.5 bg-slate-200 rounded-lg accent-emerald-500"
+                                                />
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {paddingMode === 'independent' && (
+                                        <div className="grid grid-cols-2 gap-3">
+                                            {/* Top */}
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-bold text-slate-500">上 (Top)</label>
+                                                <input type="range" min={CONFIG.ranges.padding.min} max={CONFIG.ranges.padding.max} value={paddingTop} onChange={(e) => setPaddingTop(Number(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-lg accent-emerald-500" />
+                                            </div>
+                                            {/* Bottom */}
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-bold text-slate-500">下 (Bottom)</label>
+                                                <input type="range" min={CONFIG.ranges.padding.min} max={CONFIG.ranges.padding.max} value={paddingBottom} onChange={(e) => setPaddingBottom(Number(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-lg accent-emerald-500" />
+                                            </div>
+                                            {/* Left */}
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-bold text-slate-500">左 (Left)</label>
+                                                <input type="range" min={CONFIG.ranges.padding.min} max={CONFIG.ranges.padding.max} value={paddingLeft} onChange={(e) => setPaddingLeft(Number(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-lg accent-emerald-500" />
+                                            </div>
+                                            {/* Right */}
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-bold text-slate-500">右 (Right)</label>
+                                                <input type="range" min={CONFIG.ranges.padding.min} max={CONFIG.ranges.padding.max} value={paddingRight} onChange={(e) => setPaddingRight(Number(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-lg accent-emerald-500" />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     {/* Upload Button */}
                     <div className="p-4">
                         <label className="flex flex-col items-center justify-center w-full h-16 border-2 border-dashed border-indigo-200 rounded-xl cursor-pointer bg-indigo-50/50 hover:bg-indigo-50 transition-colors group">
@@ -598,7 +885,7 @@ const App3: React.FC = () => {
                                 onClick={() => setSelectedItem(item)}
                                 className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer border transition-all relative group
                                 ${selectedItem?.id === item.id ? 'bg-white border-indigo-500 shadow-md ring-1 ring-indigo-500' : 'bg-white border-slate-200 hover:border-indigo-300'}
-                            `}
+`}
                             >
                                 <div className="w-10 h-10 bg-slate-100 rounded overflow-hidden flex-shrink-0 border border-slate-100">
                                     {item.status === 'processing' ? (
@@ -610,7 +897,7 @@ const App3: React.FC = () => {
                                     )}
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                    <p className={`text-xs font-bold truncate ${selectedItem?.id === item.id ? 'text-indigo-700' : 'text-slate-700'}`}>
+                                    <p className={`text-xs font-bold truncate ${selectedItem?.id === item.id ? 'text-indigo-700' : 'text-slate-700'} `}>
                                         {item.name}
                                     </p>
                                     <p className="text-[9px] text-slate-400 flex gap-1 items-center mt-0.5">
@@ -640,21 +927,21 @@ const App3: React.FC = () => {
                             <div className="bg-white/90 backdrop-blur shadow-sm rounded-lg p-1 flex gap-1 border border-slate-200">
                                 <button
                                     onClick={() => setViewMode('original')}
-                                    className={`p-1.5 rounded-md transition-all ${viewMode === 'original' ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}`}
+                                    className={`p-1.5 rounded-md transition-all ${viewMode === 'original' ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'} `}
                                     title="僅原圖 (Original Only)"
                                 >
                                     <ImageIcon className="w-4 h-4" />
                                 </button>
                                 <button
                                     onClick={() => setViewMode('split')}
-                                    className={`p-1.5 rounded-md transition-all ${viewMode === 'split' ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}`}
+                                    className={`p-1.5 rounded-md transition-all ${viewMode === 'split' ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'} `}
                                     title="對比模式 (Split View)"
                                 >
                                     <Columns className="w-4 h-4" />
                                 </button>
                                 <button
                                     onClick={() => setViewMode('processed')}
-                                    className={`p-1.5 rounded-md transition-all ${viewMode === 'processed' ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}`}
+                                    className={`p-1.5 rounded-md transition-all ${viewMode === 'processed' ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'} `}
                                     title="僅成品 (Processed Only)"
                                 >
                                     <LayoutTemplate className="w-4 h-4" />
@@ -668,7 +955,7 @@ const App3: React.FC = () => {
                                 disabled={selectedItem.status !== 'done'}
                                 className={`px-4 py-2 rounded-full shadow-lg font-bold text-sm flex items-center gap-2 transition-transform active:scale-95
                                 ${selectedItem.status === 'done' ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}
-                            `}
+`}
                             >
                                 <Download className="w-4 h-4" /> 下載成品
                             </button>
@@ -688,6 +975,7 @@ const App3: React.FC = () => {
                                 <ComparisonView
                                     originalUrl={selectedItem.originalUrl}
                                     processedUrl={selectedItem.processedUrl}
+                                    croppedOriginalUrl={selectedItem.croppedOriginalUrl}
                                     settings={selectedItem.settingsUsed}
                                     viewMode={viewMode}
                                 />
@@ -709,7 +997,7 @@ const App3: React.FC = () => {
             .custom-scrollbar::-webkit-scrollbar { width: 4px; }
             .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
             .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        `}</style>
+`}</style>
         </div>
     );
 };
