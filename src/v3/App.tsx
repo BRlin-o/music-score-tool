@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, type ChangeEvent, type ClipboardEvent } from 'react';
-import { Upload, X, Download, Image as ImageIcon, Sliders, Loader2, Trash2, Sparkles, Zap, History, ArrowRightLeft, ScanLine, Type, Droplet, LayoutTemplate, Columns, Crop, Move, Maximize, Minimize } from 'lucide-react';
+import { Upload, X, Download, Image as ImageIcon, Sliders, Loader2, Trash2, Sparkles, Zap, History, ArrowRightLeft, ScanLine, Type, Droplet, LayoutTemplate, Columns, Crop, Move, Maximize } from 'lucide-react';
 
 // --- CONSTANTS ---
 const CONFIG = {
