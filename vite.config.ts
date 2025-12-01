@@ -11,6 +11,7 @@ export default defineConfig({
       input: {
         main: 'index.html',
         v2: 'v2/index.html',
+        v3: 'v3/index.html',
       },
     },
   },
