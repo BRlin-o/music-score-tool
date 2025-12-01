@@ -19,7 +19,9 @@ const CONFIG = {
             right: 50,
             bottom: 50,
             left: 50
-        }
+        },
+        backgroundColor: '#FFFFFF',
+        isTransparent: false
     },
     ranges: {
         scale: { min: 1.0, max: 3.0, step: 0.5 },
@@ -49,6 +51,8 @@ interface Settings {
     paddingRight: number;
     paddingBottom: number;
     paddingLeft: number;
+    backgroundColor: string;
+    isTransparent: boolean;
 }
 
 interface GalleryItem {
@@ -92,7 +96,9 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<P
                     paddingTop,
                     paddingRight,
                     paddingBottom,
-                    paddingLeft
+                    paddingLeft,
+                    backgroundColor = '#FFFFFF',
+                    isTransparent = false
                 } = settings;
 
                 const originalWidth = img.width;
@@ -133,6 +139,15 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<P
                     return ((val - lower) / (upper - lower)) * 255;
                 };
 
+                // Parse Background Color
+                let bgR = 255, bgG = 255, bgB = 255;
+                if (!isTransparent && backgroundColor.startsWith('#')) {
+                    const hex = backgroundColor.substring(1);
+                    bgR = parseInt(hex.substring(0, 2), 16);
+                    bgG = parseInt(hex.substring(2, 4), 16);
+                    bgB = parseInt(hex.substring(4, 6), 16);
+                }
+
                 // ALGORITHM IMPLEMENTATION
                 if (algorithm === 'adaptive') {
                     const blurCanvas = document.createElement('canvas');
@@ -151,13 +166,29 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<P
 
                     for (let i = 0; i < data.length; i += 4) {
                         const r = data[i];
-                        const bgR = blurData[i];
+                        const bgR_pixel = blurData[i];
                         const sensitivityOffset = (100 - threshold) / 2;
-                        const localThreshold = bgR - sensitivityOffset;
-                        const finalVal = getSoftVal(r, localThreshold, smoothness);
-                        data[i] = finalVal;
-                        data[i + 1] = finalVal;
-                        data[i + 2] = finalVal;
+                        const localThreshold = bgR_pixel - sensitivityOffset;
+
+                        // 0 (Ink) to 255 (Paper)
+                        const whiteness = getSoftVal(r, localThreshold, smoothness);
+                        const t = whiteness / 255;
+
+                        if (isTransparent) {
+                            // Ink is black (0,0,0), Alpha depends on whiteness
+                            data[i] = 0;
+                            data[i + 1] = 0;
+                            data[i + 2] = 0;
+                            data[i + 3] = 255 - whiteness; // 255 (Ink) -> 0 (Paper)
+                        } else {
+                            // Blend Ink (Black) with Background Color
+                            // Pixel = Ink * (1-t) + Bg * t
+                            // Assuming Ink is Black (0,0,0): Pixel = Bg * t
+                            data[i] = bgR * t;
+                            data[i + 1] = bgG * t;
+                            data[i + 2] = bgB * t;
+                            data[i + 3] = 255;
+                        }
                     }
                 } else {
                     const boostFactor = contrastBoost / 100;
@@ -166,10 +197,20 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<P
                         if (r < threshold + 40) {
                             r = r * (1 - boostFactor);
                         }
-                        const finalVal = getSoftVal(r, threshold, smoothness);
-                        data[i] = finalVal;
-                        data[i + 1] = finalVal;
-                        data[i + 2] = finalVal;
+                        const whiteness = getSoftVal(r, threshold, smoothness);
+                        const t = whiteness / 255;
+
+                        if (isTransparent) {
+                            data[i] = 0;
+                            data[i + 1] = 0;
+                            data[i + 2] = 0;
+                            data[i + 3] = 255 - whiteness;
+                        } else {
+                            data[i] = bgR * t;
+                            data[i + 1] = bgG * t;
+                            data[i + 2] = bgB * t;
+                            data[i + 3] = 255;
+                        }
                     }
                 }
 
@@ -187,7 +228,43 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<P
                     for (let y = 0; y < scaledHeight; y++) {
                         for (let x = 0; x < targetWidth; x++) {
                             const idx = (y * targetWidth + x) * 4;
-                            if (data[idx] < 230) { // Threshold 230
+                            let isContent = false;
+
+                            if (isTransparent) {
+                                if (data[idx + 3] > 10) isContent = true; // Alpha > 10
+                            } else {
+                                // Check if pixel differs significantly from background color
+                                // Or just check if it's "dark enough" (since ink is black-ish)
+                                // Our logic above sets pixel = Bg * t.
+                                // So if t < 0.9 (whiteness < 230), it's content.
+                                // We can check if pixel is darker than background.
+                                // Simplest: check if R channel < bgR * 0.9 (approx)
+                                // But bgR might be 0.
+                                // Let's stick to the "whiteness" logic if possible, but we lost it.
+                                // Wait, we can re-calculate or just check R channel if we assume ink is black.
+                                // If background is black, this fails.
+                                // But usually background is light.
+                                // Let's use a simple heuristic: if R+G+B < (bgR+bgG+bgB) - 20 ?
+                                // Or just use the original image for crop detection?
+                                // The user said "Crop based on PROCESSED image".
+                                // So we must use processed data.
+
+                                // If background is white (255,255,255), content is darker.
+                                // If background is black (0,0,0), content is... wait, ink is black too.
+                                // If background is black, you can't see black ink.
+                                // Assuming background is not black.
+
+                                // Let's assume standard usage: Light background.
+                                // If R < 230 (default threshold), it works for White bg.
+                                // For arbitrary bg, we need to know "is this ink?".
+                                // Ink is always Black (0,0,0) in our logic (scaled by t).
+                                // So if pixel is close to Bg, it's paper.
+                                // Distance = |R - bgR| + |G - bgG| + |B - bgB|.
+                                const dist = Math.abs(data[idx] - bgR) + Math.abs(data[idx + 1] - bgG) + Math.abs(data[idx + 2] - bgB);
+                                if (dist > 30) isContent = true;
+                            }
+
+                            if (isContent) {
                                 if (x < minX) minX = x;
                                 if (x > maxX) maxX = x;
                                 if (y < minY) minY = y;
@@ -211,8 +288,14 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<P
                         const finalCtx = finalCanvas.getContext('2d');
                         if (!finalCtx) throw new Error("Could not get final canvas context");
 
-                        finalCtx.fillStyle = '#FFFFFF';
-                        finalCtx.fillRect(0, 0, finalWidth, finalHeight);
+                        // Fill Background
+                        if (!isTransparent) {
+                            finalCtx.fillStyle = backgroundColor;
+                            finalCtx.fillRect(0, 0, finalWidth, finalHeight);
+                        } else {
+                            finalCtx.clearRect(0, 0, finalWidth, finalHeight);
+                        }
+
                         finalCtx.drawImage(canvas,
                             minX, minY, contentWidth, contentHeight,
                             paddingLeft, paddingTop, contentWidth, contentHeight
@@ -227,8 +310,15 @@ const processSingleImage = async (imgSrc: string, settings: Settings): Promise<P
                         if (!finalOrgCtx) throw new Error("Could not get final org canvas context");
 
                         // Fill white (or transparent? White is safer for consistency)
-                        finalOrgCtx.fillStyle = '#FFFFFF';
-                        finalOrgCtx.fillRect(0, 0, finalWidth, finalHeight);
+                        // For original crop, we probably still want White background for padding?
+                        // Or match the user setting?
+                        // Matching user setting is better for "Sync".
+                        if (!isTransparent) {
+                            finalOrgCtx.fillStyle = backgroundColor;
+                            finalOrgCtx.fillRect(0, 0, finalWidth, finalHeight);
+                        } else {
+                            finalOrgCtx.clearRect(0, 0, finalWidth, finalHeight);
+                        }
 
                         // Draw from SCALED ORIGINAL canvas
                         finalOrgCtx.drawImage(scaledCanvas,
@@ -386,20 +476,26 @@ const App3: React.FC = () => {
     const [paddingBottom, setPaddingBottom] = useState(CONFIG.defaults.padding.bottom);
     const [paddingLeft, setPaddingLeft] = useState(CONFIG.defaults.padding.left);
 
+    // Background
+    const [backgroundColor, setBackgroundColor] = useState(CONFIG.defaults.backgroundColor);
+    const [isTransparent, setIsTransparent] = useState(CONFIG.defaults.isTransparent);
+
     // View Mode
     const [viewMode, setViewMode] = useState<ViewMode>('split');
 
     const settingsRef = useRef<Settings>({
         algorithm, threshold, contrastBoost, scaleMultiplier, smoothness,
-        autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft
+        autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft,
+        backgroundColor, isTransparent
     });
 
     useEffect(() => {
         settingsRef.current = {
             algorithm, threshold, contrastBoost, scaleMultiplier, smoothness,
-            autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft
+            autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft,
+            backgroundColor, isTransparent
         };
-    }, [algorithm, threshold, contrastBoost, scaleMultiplier, smoothness, autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft]);
+    }, [algorithm, threshold, contrastBoost, scaleMultiplier, smoothness, autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft, backgroundColor, isTransparent]);
 
     // --- LIVE PREVIEW LOGIC ---
     const processTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -420,6 +516,9 @@ const App3: React.FC = () => {
             setPaddingRight(prev => prev !== (s.paddingRight ?? CONFIG.defaults.padding.right) ? (s.paddingRight ?? CONFIG.defaults.padding.right) : prev);
             setPaddingBottom(prev => prev !== (s.paddingBottom ?? CONFIG.defaults.padding.bottom) ? (s.paddingBottom ?? CONFIG.defaults.padding.bottom) : prev);
             setPaddingLeft(prev => prev !== (s.paddingLeft ?? CONFIG.defaults.padding.left) ? (s.paddingLeft ?? CONFIG.defaults.padding.left) : prev);
+
+            setBackgroundColor(prev => prev !== (s.backgroundColor ?? CONFIG.defaults.backgroundColor) ? (s.backgroundColor ?? CONFIG.defaults.backgroundColor) : prev);
+            setIsTransparent(prev => prev !== (s.isTransparent ?? CONFIG.defaults.isTransparent) ? (s.isTransparent ?? CONFIG.defaults.isTransparent) : prev);
         }
     }, [selectedItem?.id]);
 
@@ -429,7 +528,8 @@ const App3: React.FC = () => {
 
         const newSettings: Settings = {
             algorithm, threshold, contrastBoost, scaleMultiplier, smoothness,
-            autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft
+            autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft,
+            backgroundColor, isTransparent
         };
 
         const isSame =
@@ -443,7 +543,9 @@ const App3: React.FC = () => {
             selectedItem.settingsUsed.paddingTop === newSettings.paddingTop &&
             selectedItem.settingsUsed.paddingRight === newSettings.paddingRight &&
             selectedItem.settingsUsed.paddingBottom === newSettings.paddingBottom &&
-            selectedItem.settingsUsed.paddingLeft === newSettings.paddingLeft;
+            selectedItem.settingsUsed.paddingLeft === newSettings.paddingLeft &&
+            selectedItem.settingsUsed.backgroundColor === newSettings.backgroundColor &&
+            selectedItem.settingsUsed.isTransparent === newSettings.isTransparent;
 
         if (isSame) return;
 
@@ -483,7 +585,7 @@ const App3: React.FC = () => {
         return () => {
             if (processTimeoutRef.current) clearTimeout(processTimeoutRef.current);
         };
-    }, [algorithm, threshold, contrastBoost, scaleMultiplier, smoothness, autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft]);
+    }, [algorithm, threshold, contrastBoost, scaleMultiplier, smoothness, autoCrop, paddingMode, paddingTop, paddingRight, paddingBottom, paddingLeft, backgroundColor, isTransparent]);
 
 
     // --- LOGIC ---
@@ -851,6 +953,53 @@ const App3: React.FC = () => {
                                 </div>
                             </div>
                         )}
+                    </div>
+
+                    {/* 5. Background Settings */}
+                    <div className="p-4 border-t border-slate-200 bg-white">
+                        <div className="flex items-center gap-2 mb-4 text-slate-700">
+                            <LayoutTemplate className="w-4 h-4 text-purple-500" />
+                            <span className="text-sm font-bold">背景設定</span>
+                        </div>
+
+                        <div className="space-y-4">
+                            <label className="flex items-center justify-between cursor-pointer">
+                                <span className="text-xs font-bold text-slate-600">透明背景</span>
+                                <div className="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={isTransparent}
+                                        onChange={(e) => setIsTransparent(e.target.checked)}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-500"></div>
+                                </div>
+                            </label>
+
+                            {!isTransparent && (
+                                <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-xs font-bold text-slate-600">背景顏色</label>
+                                        <span className="text-xs font-mono text-slate-500 uppercase">{backgroundColor}</span>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="color"
+                                            value={backgroundColor}
+                                            onChange={(e) => setBackgroundColor(e.target.value)}
+                                            className="h-8 w-12 p-0 border-0 rounded cursor-pointer"
+                                        />
+                                        <input
+                                            type="text"
+                                            value={backgroundColor}
+                                            onChange={(e) => setBackgroundColor(e.target.value)}
+                                            className="flex-1 text-xs border border-slate-200 rounded px-2 font-mono uppercase focus:outline-none focus:border-purple-500"
+                                            placeholder="#FFFFFF"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* Upload Button */}
